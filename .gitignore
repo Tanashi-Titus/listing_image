@@ -1,0 +1,25 @@
+.chrome_profile/
+ket_qua/
+data/input.xlsx
+__pycache__/
+*.pyc
+.venv/
+
+# License riêng của từng máy — KHÔNG commit, KHÔNG đóng gói kèm exe.
+license.key
+license.key.off
+machine_id.txt
+
+# Sản phẩm build (rất nặng — GitHub chặn file >100MB, và không cần lên repo)
+build/
+dist/
+build_app/
+dist_app/
+*.zip
+
+# Ảnh dữ liệu thử nghiệm (nặng, là dữ liệu nội bộ)
+data/san_pham/
+data/nguoi_mau/
+
+# Môi trường ảo dựng lúc build trên Mac
+.venv/

@@ -1,0 +1,67 @@
+# ============================================================================
+#  Build TNT Listing Image thành .app cho macOS — CHẠY TRÊN RUNNER MAC CỦA GITHUB
+#  => KHÔNG cần sở hữu máy Mac.
+#
+#  Cách dùng:
+#    1. Đưa thư mục listing_image này lên một repo GitHub (private cũng được).
+#    2. Vào tab Actions -> chọn "Build macOS app" -> Run workflow.
+#    3. Build xong tải file zip ở mục "Artifacts".
+#
+#  Zip xuất ra KHÔNG chứa license.key / machine_id.txt.
+# ============================================================================
+name: Build macOS app
+
+on:
+  workflow_dispatch:        # bấm nút chạy tay
+  push:
+    tags: ["v*"]            # hoặc tự chạy khi gắn tag vX.Y
+
+jobs:
+  build-mac:
+    # macos-14 = Apple Silicon (arm64). Đổi thành macos-13 nếu cần bản Intel x86_64.
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cài thư viện
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+          pip install cryptography PySide6
+
+      - name: Nạp driver Playwright
+        run: python -m playwright install chromium || true
+
+      - name: Build .app
+        run: pyinstaller TNT_Listing_mac.spec
+
+      - name: Ad-hoc codesign
+        run: codesign --force --deep --sign - dist/TNT_Listing.app || true
+
+      - name: Dọn file riêng tư (không phát license của máy build)
+        run: |
+          find dist/TNT_Listing.app \
+            \( -name 'license.key' -o -name 'license.key.off' -o -name 'machine_id.txt' \) \
+            -delete || true
+
+      - name: Đóng gói zip (ditto giữ quyền thực thi của .app)
+        run: |
+          cd dist
+          ditto -c -k --sequesterRsrc --keepParent TNT_Listing.app TNT_Listing_MAC.zip
+
+      - name: Kiểm tra zip không lẫn license
+        run: |
+          if unzip -l dist/TNT_Listing_MAC.zip | grep -E 'license\.key|machine_id\.txt'; then
+            echo "!! Zip còn file riêng tư — dừng."; exit 1
+          fi
+          echo "OK: zip sạch."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TNT_Listing_MAC
+          path: dist/TNT_Listing_MAC.zip
