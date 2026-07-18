@@ -1,0 +1,29 @@
+# ============================================================================
+#  Self-test lớp license NGAY TRÊN máy Mac thật của GitHub (arm64) — MIỄN PHÍ.
+#  Không cần máy Mac riêng, không cần GUI, không phiền nhân viên.
+#
+#  Dùng: tab Actions -> "Mac license self-test" -> Run workflow.
+#  Đọc log job để biết mã máy có ổn định + license validate được không.
+# ============================================================================
+name: Mac license self-test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tnt_license.py"
+      - "mac_selftest.py"
+      - ".github/workflows/mac-selftest.yml"
+
+jobs:
+  selftest:
+    runs-on: macos-14        # Apple Silicon arm64 — giống máy nhân viên
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cài cryptography
+        run: pip install cryptography
+      - name: Chạy self-test license trên macOS
+        run: python mac_selftest.py
