@@ -257,10 +257,21 @@ def machine_id_pretty(mid: str | None = None) -> str:
 #  3. ĐỌC & KIỂM license.key
 # --------------------------------------------------------------------- #
 def _app_dir() -> Path:
-    """Thư mục của tool đang chạy (cạnh exe khi đóng gói, cạnh script khi chạy code)."""
+    """
+    Thư mục để TÌM/GHI license.key & machine_id.txt (cạnh tool đang chạy).
+
+    - Windows/Linux đóng gói: cạnh file thực thi.
+    - macOS đóng gói .app: file thực thi nằm trong Foo.app/Contents/MacOS/, nên
+      trả về thư mục CHỨA .app → người dùng đặt license.key CẠNH .app là đúng
+      (trực quan, không phải chui vào trong bundle).
+    - Chạy code: cạnh script.
+    """
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    # __file__ có thể nằm trong thư mục tool (vì mỗi tool nhúng 1 bản copy).
+        exe = Path(sys.executable).resolve()
+        for p in exe.parents:
+            if p.suffix == ".app":
+                return p.parent            # thư mục chứa Foo.app
+        return exe.parent
     return Path(sys.argv[0]).resolve().parent if sys.argv and sys.argv[0] else Path.cwd()
 
 
