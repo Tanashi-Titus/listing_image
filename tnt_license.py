@@ -152,11 +152,25 @@ def _win_volume_serial() -> str:
     return ""
 
 
-def _mac_hw_uuid() -> str:
-    """IOPlatformUUID trên macOS — định danh phần cứng ổn định."""
-    out = _run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"])
-    for line in out.splitlines():
-        if "IOPlatformUUID" in line:
+# Đường dẫn TUYỆT ĐỐI tới ioreg. Khi app mở bằng double-click (Finder/launchd),
+# PATH bị rút gọn và KHÔNG có /usr/sbin → gọi "ioreg" trần sẽ không tìm thấy →
+# mã máy tính ra KHÁC so với lúc chạy trong Terminal → license không khớp.
+# Dùng đường dẫn tuyệt đối để mã máy GIỐNG HỆT nhau ở mọi cách mở.
+_IOREG = "/usr/sbin/ioreg"
+
+
+def _ioreg_device() -> str:
+    """Chạy ioreg (thử tuyệt đối trước, rồi PATH) — trả nguyên output."""
+    for cmd0 in (_IOREG, "ioreg"):
+        out = _run([cmd0, "-rd1", "-c", "IOPlatformExpertDevice"])
+        if out:
+            return out
+    return ""
+
+
+def _ioreg_value(key: str) -> str:
+    for line in _ioreg_device().splitlines():
+        if key in line:
             # dạng:  "IOPlatformUUID" = "XXXX-...."
             parts = line.split('"')
             if len(parts) >= 4:
@@ -164,14 +178,13 @@ def _mac_hw_uuid() -> str:
     return ""
 
 
+def _mac_hw_uuid() -> str:
+    """IOPlatformUUID trên macOS — định danh phần cứng ổn định."""
+    return _ioreg_value("IOPlatformUUID")
+
+
 def _mac_serial() -> str:
-    out = _run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"])
-    for line in out.splitlines():
-        if "IOPlatformSerialNumber" in line:
-            parts = line.split('"')
-            if len(parts) >= 4:
-                return parts[3].strip()
-    return ""
+    return _ioreg_value("IOPlatformSerialNumber")
 
 
 def _linux_machine_id() -> str:
