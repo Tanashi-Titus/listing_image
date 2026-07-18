@@ -40,6 +40,18 @@ jobs:
       - name: Build .app
         run: pyinstaller TNT_Listing_mac.spec
 
+      - name: Kiểm tra ĐÃ ra .app chuẩn (bắt lỗi bundle hỏng ngay tại CI)
+        run: |
+          APP=dist/TNT_Listing.app
+          if [ ! -d "$APP" ]; then
+            echo "!! KHÔNG tạo được $APP — spec thiếu BUNDLE hoặc build lỗi."; exit 1
+          fi
+          if [ ! -x "$APP/Contents/MacOS/TNT_Listing" ]; then
+            echo "!! Thiếu file thực thi trong $APP/Contents/MacOS — bundle hỏng."
+            ls -la "$APP/Contents/MacOS" || true; exit 1
+          fi
+          echo "OK: $APP là bundle hợp lệ."
+
       - name: Ad-hoc codesign
         run: codesign --force --deep --sign - dist/TNT_Listing.app || true
 
