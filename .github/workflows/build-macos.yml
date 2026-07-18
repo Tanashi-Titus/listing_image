@@ -55,8 +55,28 @@ jobs:
       - name: Ad-hoc codesign
         run: codesign --force --deep --sign - dist/TNT_Listing.app || true
 
+      - name: Smoke test — app THẬT khởi động được trên Mac (headless)
+        run: |
+          BIN=dist/TNT_Listing.app/Contents/MacOS/TNT_Listing
+          export QT_QPA_PLATFORM=offscreen
+          rm -f dist/machine_id.txt
+          # Runner không có license -> app tính mã máy, GHI machine_id.txt (trước dialog),
+          # rồi kẹt ở dialog -> timeout kết thúc. Có machine_id.txt = app CHẠY được:
+          # nghĩa là cryptography/OpenSSL nạp OK, tính được mã máy trên macOS thật.
+          timeout 60 "$BIN" || true
+          MID=$(find dist -maxdepth 2 -name machine_id.txt 2>/dev/null | head -1)
+          if [ -z "$MID" ]; then
+            echo "❌ App KHÔNG khởi động được tới bước license — nghi crash sớm"
+            echo "   (thiếu thư viện/OpenSSL/Qt trong bundle). Xem log phía trên."
+            exit 1
+          fi
+          echo "✅ App khởi động OK trên macOS. Mã máy của RUNNER:"
+          cat "$MID"
+          echo "(mã máy runner khác máy nhân viên — chỉ để chứng minh app chạy được)"
+
       - name: Dọn file riêng tư (không phát license của máy build)
         run: |
+          rm -f dist/machine_id.txt      # do smoke test tạo ra
           find dist/TNT_Listing.app \
             \( -name 'license.key' -o -name 'license.key.off' -o -name 'machine_id.txt' \) \
             -delete || true
