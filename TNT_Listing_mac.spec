@@ -26,16 +26,17 @@ datas = []
 binaries = []
 hiddenimports = ["core", "ui_listing", "tnt_license", "cryptography"]
 
-# Playwright cần kèm driver (node) — collect_all lấy hết data package.
-for pkg in ("playwright",):
+# Playwright cần kèm driver (node); cryptography có phần Rust (_rust)+cffi -> collect_all
+# mới gói đủ, tránh lỗi "No module named 'cryptography'" trên máy đích.
+for pkg in ("playwright", "cryptography", "cffi"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b
     hiddenimports += h
+hiddenimports += ["cryptography.hazmat.bindings._rust", "_cffi_backend"]
 
 hiddenimports += collect_submodules("core")
 hiddenimports += collect_submodules("ui_listing")
-hiddenimports += collect_submodules("cryptography")
 
 a = Analysis(
     ["app_listing.py"],
