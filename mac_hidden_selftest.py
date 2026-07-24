@@ -51,16 +51,23 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 def write_summary() -> None:
-    path = __import__("os").environ.get("GITHUB_STEP_SUMMARY")
-    if not path:
-        return
-    try:
-        with open(path, "a", encoding="utf-8") as f:
-            f.write("## Kết quả chế độ chạy ngầm trên macOS\n\n")
-            for line in SUMMARY:
-                f.write(f"- {line}\n")
-    except Exception:
-        pass
+    import os
+
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if path:
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write("## Kết quả chế độ chạy ngầm trên macOS\n\n")
+                for line in SUMMARY:
+                    f.write(f"- {line}\n")
+        except Exception:
+            pass
+    if os.environ.get("GITHUB_ACTIONS"):
+        # Annotation hiện ngay trên trang lần chạy VÀ đọc được qua API công khai
+        # (log job thì phải có quyền admin mới tải được).
+        body = "%0A".join(s.replace("%", "%25").replace("\r", "").replace("\n", " ")
+                          for s in SUMMARY)
+        print(f"::notice title=Chế độ ẩn trên macOS::{body}")
 
 
 async def main() -> None:
