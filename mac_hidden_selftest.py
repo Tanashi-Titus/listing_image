@@ -31,19 +31,43 @@ from core.aio_browser import (  # noqa: E402
 )
 
 FAILS = []
+SUMMARY = []
+
+
+def note(line: str) -> None:
+    """In ra log VÀ ghi vào tóm tắt công khai của lần chạy CI.
+
+    Log job của GitHub cần quyền admin mới tải được, còn phần tóm tắt thì ai
+    xem repo cũng đọc được → tiện đối chiếu kết quả trên Mac.
+    """
+    print(line)
+    SUMMARY.append(line)
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
-    print(("✅ " if ok else "❌ ") + name + (f"  → {detail}" if detail and not ok else ""))
+    note(("✅ " if ok else "❌ ") + name + (f"  → {detail}" if detail and not ok else ""))
     if not ok:
         FAILS.append(name)
+
+
+def write_summary() -> None:
+    path = __import__("os").environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("## Kết quả chế độ chạy ngầm trên macOS\n\n")
+            for line in SUMMARY:
+                f.write(f"- {line}\n")
+    except Exception:
+        pass
 
 
 async def main() -> None:
     print("== macOS hidden-mode self-test ==")
     print("platform:", sys.platform)
-    print("mép phải vùng màn hình:", _virtual_right_edge())
-    print("toạ độ ẩn dự kiến     :", _offscreen_xy())
+    note(f"mép phải vùng màn hình: {_virtual_right_edge()}")
+    note(f"toạ độ ẩn dự kiến: {_offscreen_xy()}")
 
     profile = Path(tempfile.mkdtemp(prefix="tnt_hidden_"))
     br = AioBrowser(profile_dir=profile, hidden=True)
@@ -58,7 +82,7 @@ async def main() -> None:
         wid = (await cdp.send("Browser.getWindowForTarget"))["windowId"]
         bounds = (await cdp.send("Browser.getWindowBounds",
                                  {"windowId": wid}))["bounds"]
-        print("bounds cửa sổ:", bounds)
+        note(f"bounds cửa sổ sau khi ẩn: `{bounds}`")
         offscreen = await br._is_offscreen(cdp, wid)
         check("cửa sổ nằm ngoài tầm mắt (offscreen hoặc minimized)",
               offscreen, str(bounds))
@@ -77,7 +101,8 @@ async def main() -> None:
                 })();
             })"""
         )
-        print("số nhịp setTimeout trong 3s:", ticks)
+        note(f"số nhịp setTimeout trong 3 giây: {ticks} "
+             "(bình thường ~60, bị Chrome bóp thì ~0)")
         # 3s / 50ms ≈ 60 nhịp nếu chạy bình thường; lấy mốc 25 cho rộng rãi.
         check("timer KHÔNG bị Chrome bóp khi cửa sổ ẩn", ticks >= 25,
               f"chỉ {ticks} nhịp — thiếu cờ chống throttle?")
@@ -112,7 +137,8 @@ async def main() -> None:
 
     if not IS_MAC:
         print("\nℹ️  Không phải macOS — bài test vẫn có ý nghĩa hồi quy cho Windows.")
-    print(f"\n==> {'HỎNG: ' + ', '.join(FAILS) if FAILS else 'TẤT CẢ ĐỀU ĐẠT'}")
+    note("==> " + ("HỎNG: " + ", ".join(FAILS) if FAILS else "TẤT CẢ ĐỀU ĐẠT"))
+    write_summary()
     sys.exit(1 if FAILS else 0)
 
 
