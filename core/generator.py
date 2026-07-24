@@ -208,10 +208,12 @@ async def generate_one(
             await session.upload_images(refs)
             await session.type_prompt(final_prompt)
             await session.send()
-            await session.page.wait_for_timeout(2000)
+            await session.page.wait_for_timeout(600)
             src = await session.wait_for_image(timeout_ms=timeout_ms)
             if not src:
                 last_err = "no image"
+                if session.hit_limit():
+                    break        # hết lượt → retry cũng vô ích, trả lỗi ngay
                 continue
             out = Path(dest)
             await session.download_image(src, out)

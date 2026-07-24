@@ -15,7 +15,9 @@ from typing import Callable, List, Optional
 
 from core.aio_browser import AioBrowser
 from core.aio_chatgpt import AioSession, StopRequested
-from core.analyzer import analyze, make_prompts, make_seo, generate_seo
+from core.analyzer import (
+    analyze, make_prompts, make_seo, generate_seo, PROMPT_SHARDS,
+)
 from core.generator import generate_one, to_square
 from core.qc import qc_image
 from core import store
@@ -173,10 +175,20 @@ async def make_prompts_pipeline(product: Path, types=None,
             raise RuntimeError("Chưa đăng nhập ChatGPT.")
         s0 = AioSession(page0)
         s0.cancel = cancel
+        # Mở sẵn vài tab phụ để CHIA NHỎ việc sinh prompt chạy song song.
+        extra = []
+        n_extra = min(PROMPT_SHARDS, max(1, len(types) // 2)) - 1
+        for _ in range(max(0, n_extra)):
+            try:
+                s = AioSession(await br.new_page())
+                s.cancel = cancel
+                extra.append(s)
+            except Exception:
+                break
         _emit(progress, "analyze_start", {})
         res = await make_prompts(s0, product, types, language, product_info,
                                  shop, market, has_person=has_person,
-                                 has_scene=has_scene)
+                                 has_scene=has_scene, extra_sessions=extra)
         res["prompts"] = _filter_prompts(res["prompts"], types, quantity)
         _emit(progress, "analyze_done", {"n_prompts": len(res["prompts"])})
         return res
@@ -209,20 +221,30 @@ async def make_seo_pipeline(product: Path, product_info: str = "", shop: str = "
 
 
 # --- Nhận diện "hết lượt Free" -------------------------------------------- #
+# Cụm từ ĐẶC TRƯNG. Bản cũ dùng các từ quá chung ("limit", "maximum",
+# "image generation", "come back") nên chữ trong chính câu trả lời của ChatGPT
+# cũng khớp → tưởng hết lượt → đổi tài khoản oan, mỗi lần mất ~30s khởi động.
 _LIMIT_HINTS = [
-    "limit", "reached", "hết lượt", "giới hạn", "upgrade", "try again later",
-    "you've hit", "you've reached", "reached your", "maximum", "rate limit",
-    "please wait", "come back later", "come back", "try again in",
-    "please try again", "create more images", "image generation",
-    "quá nhiều yêu cầu", "hạn mức", "vui lòng thử lại",
+    "you've hit the limit", "you've reached", "reached your limit",
+    "hit your limit", "usage limit", "rate limit", "limit reached",
+    "try again later", "try again in", "come back later",
+    "upgrade to chatgpt", "image generation limit",
+    "hết lượt", "đã đạt giới hạn", "giới hạn sử dụng", "hạn mức",
+    "vui lòng thử lại sau", "quá nhiều yêu cầu",
 ]
 # Số ảnh LỖI LIÊN TIẾP để tự coi là hết lượt/hỏng (dù không nhận ra câu báo).
 _FAIL_STREAK = 3
 
 
-async def _page_has_limit(page) -> bool:
+async def _session_hit_limit(sess) -> bool:
+    """Hết lượt? Ưu tiên mã HTTP 403/429 (chắc chắn), sau đó mới dò chữ."""
     try:
-        txt = (await page.inner_text("main")).lower()
+        if sess.hit_limit():
+            return True
+    except Exception:
+        pass
+    try:
+        txt = (await sess.page.inner_text("main")).lower()
         return any(h in txt for h in _LIMIT_HINTS)
     except Exception:
         return False
@@ -285,7 +307,7 @@ async def _batch_account(br, page0, items, product, person, scene, attributes,
                         done[idx] = res
                         _emit_img(idx, prompt_obj, res)
                 else:
-                    is_limit = await _page_has_limit(sess.page)
+                    is_limit = await _session_hit_limit(sess)
                     async with lock:
                         consec["n"] += 1
                         streak = consec["n"]
@@ -362,42 +384,73 @@ async def generate_from_prompts(prompts, product: Path, person=None, scene=None,
                 _emit(progress, "account_skip",
                       {"profile": prof_name, "reason": "chưa đăng nhập"})
                 continue
+            seo_task = None
             if seo_needed:
                 _emit(progress, "seo_start", {})
-                try:
-                    seo_page = await br.new_page()
-                    ss = AioSession(seo_page)
-                    ss.cancel = cancel
-                    if attributes:
-                        if product_info and not attributes.get("user_product_info"):
-                            attributes = {**attributes,
-                                          "user_product_info": product_info}
-                        await ss.new_chat()
-                        seo_result = await generate_seo(
-                            ss, attributes, shop, market, language)
-                    else:
+                if attributes:
+                    # Đã có thuộc tính → viết SEO ở tab riêng CHẠY SONG SONG với
+                    # việc tạo ảnh (trước đây phải chờ xong SEO mới tạo ảnh,
+                    # mất thêm 1-2 phút chết).
+                    if product_info and not attributes.get("user_product_info"):
+                        attributes = {**attributes,
+                                      "user_product_info": product_info}
+
+                    async def _seo_job(attrs=attributes):
+                        seo_page = await br.new_page()
+                        ss = AioSession(seo_page)
+                        ss.cancel = cancel
+                        try:
+                            await ss.new_chat()
+                            return await generate_seo(ss, attrs, shop, market,
+                                                      language)
+                        finally:
+                            try:
+                                await seo_page.close()
+                            except Exception:
+                                pass
+
+                    seo_task = asyncio.ensure_future(_seo_job())
+                else:
+                    # Chưa có thuộc tính → phải phân tích ảnh trước, và khâu tạo
+                    # ảnh cũng cần thuộc tính đó → giữ tuần tự.
+                    try:
+                        seo_page = await br.new_page()
+                        ss = AioSession(seo_page)
+                        ss.cancel = cancel
                         r = await make_seo(ss, product, product_info, shop,
                                            market, language)
                         if isinstance(r, dict):
                             seo_result = r.get("seo", {}) or {}
                             attributes = attributes or r.get("attributes", {})
-                    seo_needed = False
-                    _emit(progress, "seo_done", {})
+                        seo_needed = False
+                        _emit(progress, "seo_done", {})
+                        try:
+                            await seo_page.close()
+                        except Exception:
+                            pass
+                    except StopRequested:
+                        user_stopped = True
+                        break
+                    except Exception as e:
+                        _emit(progress, "account_error",
+                              {"profile": prof_name, "error": repr(e)})
+            try:
+                done, remaining, limit_hit = await _batch_account(
+                    br, page0, remaining, product, person, scene, attributes, theme,
+                    shop, concurrency, qc, sdir, n, len(results_by_idx), progress,
+                    cancel, logo,
+                )
+            finally:
+                if seo_task is not None:
                     try:
-                        await seo_page.close()
-                    except Exception:
-                        pass
-                except StopRequested:
-                    user_stopped = True
-                    break
-                except Exception as e:
-                    _emit(progress, "account_error",
-                          {"profile": prof_name, "error": repr(e)})
-            done, remaining, limit_hit = await _batch_account(
-                br, page0, remaining, product, person, scene, attributes, theme,
-                shop, concurrency, qc, sdir, n, len(results_by_idx), progress,
-                cancel, logo,
-            )
+                        seo_result = await seo_task or seo_result
+                        seo_needed = False
+                        _emit(progress, "seo_done", {})
+                    except StopRequested:
+                        user_stopped = True
+                    except Exception as e:
+                        _emit(progress, "account_error",
+                              {"profile": prof_name, "error": repr(e)})
             results_by_idx.update(done)
             if limit_hit:
                 _emit(progress, "account_limit",
